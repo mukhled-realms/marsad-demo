@@ -295,4 +295,517 @@ canvas#derbyCanvas { background: #111425; border: 2px solid #333; border-radius:
           </div>
           <button class="btn btn-gold" onclick="submitOrder()" style="margin-top:10px;">🚀 إرسال الطلب عبر واتساب</button>
         </div>
-        <div class="sec-title">📍
+        <div class="sec-title">📍 موقعك (اضغط على الخريطة)</div>
+        <div class="map-box" id="map"></div>
+      </section>
+    </main>
+
+    <div class="float-card-btn" onclick="MarsadDC.open()" style="position: absolute; bottom: 90px; right: 20px; width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, var(--gold), #A1821A); color: var(--navy); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; font-weight: 900; cursor: pointer; z-index: 150; border: 2px solid #fff; box-shadow: 0 0 20px rgba(197, 160, 33, 0.6); animation: pulseGold 2s infinite;">
+      <span style="font-size: 24px; line-height: 1; margin-bottom: 2px;">💳</span>
+      بطاقات
+    </div>
+
+    <div class="bot-fab" onclick="toggleBot()">🤖</div>
+    <div class="bot-panel" id="botPanel">
+      <div class="bot-header">
+        <h3>مساعد مرصد الذكي</h3>
+        <div style="cursor:pointer;" onclick="toggleBot()">✕</div>
+      </div>
+      <div class="bot-messages" id="botMessages">
+        <div class="msg bot">أهلاً بك! كيف أقدر أساعدك اليوم؟</div>
+      </div>
+      <div class="bot-input-area">
+        <input type="text" id="botInput" placeholder="اكتب سؤالك..." onkeypress="if(event.key==='Enter') sendBotMsg()">
+        <button onclick="sendBotMsg()">➤</button>
+      </div>
+    </div>
+
+    <nav class="bottom-nav">
+      <div class="bnav-item active" id="nav-home" onclick="nav('home')"><span class="icon">🏠</span> الرئيسية</div>
+      <div class="bnav-item" id="nav-derby" onclick="nav('derby')"><span class="icon">🏎️</span> ديربي</div>
+      <div class="bnav-item" id="nav-cart" onclick="nav('cart')"><span class="icon">🛒</span> السلة <span class="badge-count" id="cartBadge" style="display:none;">0</span></div>
+      <div class="bnav-item" id="nav-booking" onclick="nav('booking')"><span class="icon">📝</span> الطلب</div>
+    </nav>
+  </div>
+</div>
+
+<section id="marsadDigitalCards" class="mdc-page" aria-hidden="true">
+  <div class="mdc-bg"></div>
+  <div class="mdc-overlay"></div>
+
+  <header class="mdc-header">
+    <button class="mdc-icon-btn" onclick="MarsadDC.close()" aria-label="رجوع">←</button>
+    <div class="mdc-brand">
+      <span class="mdc-logo">M</span>
+      <span>مجلة البطاقات الرقمية</span>
+    </div>
+    <div class="mdc-badge" id="mdcCouponCount">🎁 0 كوبون</div>
+  </header>
+
+  <div class="mdc-volumes-wrapper">
+    <div class="mdc-volumes" id="mdcVolumes"></div>
+  </div>
+
+  <div class="mdc-carousel">
+    <button class="mdc-arrow prev" onclick="MarsadDC.nav(-1)">‹</button>
+    <div class="mdc-track" id="mdcTrack"></div>
+    <button class="mdc-arrow next" onclick="MarsadDC.nav(1)">›</button>
+  </div>
+
+  <div class="mdc-modal" id="mdcModal" role="dialog">
+    <div class="mdc-modal-inner">
+      <button class="mdc-close" onclick="MarsadDC.closeModal()">✕</button>
+      <div class="mdc-modal-img" id="mdcMImg"></div>
+      <h3 id="mdcMTitle"></h3>
+      <p id="mdcMDesc"></p>
+      <div class="mdc-mprice" id="mdcMPrice"></div>
+      <button class="mdc-buy" id="mdcMBuy">🛒 شراء الآن</button>
+    </div>
+  </div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const YEMENI_PHONE = "966532340613";
+const ADMIN_PHONE = "966592859590";
+const ZID_STORE_URL = "https://e01eb6.zid.store/products/zst_01a1ba764f4275538176da3e2a9ce38e";
+
+let allProducts = [];
+let cart = [];
+let map, currentMarker;
+let currentLat = null, currentLng = null;
+let ordersDB = JSON.parse(localStorage.getItem('marsad_orders')) || [];
+
+// 1. خاصية الخروج التلقائي (Auto-Logout)
+let inactivityTimer;
+function resetTimer() {
+    clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+        alert('انتهت الجلسة لحماية خصوصيتك. سيتم إعادة تحميل الصفحة.');
+        window.location.reload();
+    }, 600000); // 10 دقائق
+}
+window.onload = resetTimer;
+document.onmousemove = resetTimer;
+document.onkeypress = resetTimer;
+
+const now = new Date();
+document.getElementById('loginTime').innerText = `دخلت: ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+Papa.parse("Marsad_Valid_Products.csv", {
+  download: true, header: true,
+  complete: function(results) {
+    allProducts = results.data.filter(row => row['اسم المنتج'] && row['السعر']);
+    renderProducts();
+  }
+});
+
+function renderProducts() {
+  const list = document.getElementById('productList');
+  if (!list) return;
+  list.innerHTML = '';
+  allProducts.slice(0, 20).forEach(p => {
+    const name = p['اسم المنتج'];
+    const price = parseFloat(p['السعر']).toFixed(2);
+    const icon = p['القطاع'] === 'بطاقة رقمية' ? '💳' : '📦';
+    
+    const div = document.createElement('div');
+    div.className = 'product-card';
+    div.innerHTML = `
+      <div class="product-icon">${icon}</div>
+      <div class="product-info"><h3>${name}</h3><p>${p['القطاع'] || 'بقالة'}</p></div>
+      <div class="product-price">${price}<small>ر.س</small></div>
+    `;
+    div.onclick = () => addToCart(name, price);
+    list.appendChild(div);
+  });
+}
+
+function addToCart(name, price) {
+  const existing = cart.find(item => item.name === name);
+  if (existing) existing.qty += 1;
+  else cart.push({ name, price, qty: 1 });
+  updateCartUI();
+  nav('cart');
+}
+
+function updateCartUI() {
+  const cartBox = document.getElementById('cartBox');
+  const cartSummary = document.getElementById('cartSummary');
+  const cartTotalPrice = document.getElementById('cartTotalPrice');
+  const cartBadge = document.getElementById('cartBadge');
+
+  if (!cartBox) return;
+
+  if (cart.length === 0) {
+    cartBox.innerHTML = '<p style="text-align:center; color:var(--muted);">السلة فارغة</p>';
+    if(cartSummary) cartSummary.style.display = 'none';
+    if(cartBadge) cartBadge.style.display = 'none';
+    return;
+  }
+
+  cartBox.innerHTML = '';
+  let total = 0;
+  cart.forEach((item, index) => {
+    total += item.price * item.qty;
+    cartBox.innerHTML += `
+      <div class="cart-item">
+        <div class="cart-item-name">${item.name}</div>
+        <div class="qty-control">
+          <button class="qty-btn" onclick="changeQty(${index}, -1)">-</button>
+          <span>${item.qty}</span>
+          <button class="qty-btn" onclick="changeQty(${index}, 1)">+</button>
+        </div>
+      </div>
+    `;
+  });
+  cartTotalPrice.innerText = `${total.toFixed(2)} ر.س`;
+  cartSummary.style.display = 'block';
+  cartBadge.innerText = cart.reduce((sum, item) => sum + item.qty, 0);
+  cartBadge.style.display = 'grid';
+}
+
+function changeQty(index, change) {
+  cart[index].qty += change;
+  if (cart[index].qty <= 0) cart.splice(index, 1);
+  updateCartUI();
+}
+
+function nav(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const targetPage = document.getElementById('page-' + page);
+  if (targetPage) targetPage.classList.add('active');
+  
+  document.querySelectorAll('.bnav-item').forEach(b => b.classList.remove('active'));
+  const navBtn = document.getElementById('nav-' + page);
+  if (navBtn) navBtn.classList.add('active');
+  
+  if (page === 'booking') initMap();
+  if (page === 'cart') updateCartUI();
+  document.getElementById('mainScreen').scrollTop = 0;
+}
+
+function toggleDrawer() {
+  document.getElementById('sideDrawer').classList.toggle('active');
+  document.getElementById('drawerOverlay').classList.toggle('active');
+}
+
+// 2. الخريطة الإجبارية ورابط جوجل ماب
+function initMap() {
+  if (map) return;
+  map = L.map('map').setView([24.7136, 46.6753], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  map.on('click', function(e) {
+    if (currentMarker) map.removeLayer(currentMarker);
+    currentMarker = L.marker(e.latlng).addTo(map).bindPopup("موقعك").openPopup();
+    currentLat = e.latlng.lat;
+    currentLng = e.latlng.lng;
+    document.getElementById('bLocation').value = `تم تحديد الموقع (${currentLat.toFixed(4)}, ${currentLng.toFixed(4)})`;
+  });
+}
+
+// 3. دالة إرسال الطلب مع الخصوصية (الرقم المقطوع + رابط الخريطة)
+function submitOrder() {
+  if (!document.getElementById('pdplAgree').checked) { alert('يرجى الموافقة على سياسة الخصوصية أولاً.'); return; }
+  if (cart.length === 0) { alert('السلة فارغة!'); return; }
+  
+  const name = document.getElementById('bName').value;
+  const phone = document.getElementById('bPhone').value;
+  
+  if (!name || !phone) { alert('يرجى تعبئة اسم المحل والجوال.'); return; }
+  if (!currentLat || !currentLng) { alert('يرجى تحديد موقعك على الخريطة (إجباري).'); return; }
+
+  // الخصوصية: إخفاء الرقم (نأخذ آخر 4 أرقام فقط)
+  const maskedPhone = phone.length > 4 ? "*****" + phone.slice(-4) : phone;
+  
+  // رابط الخريطة المباشر
+  const mapLink = `https://www.google.com/maps?q=${currentLat},${currentLng}`;
+  const locationText = `موقع محدد (${currentLat.toFixed(4)}, ${currentLng.toFixed(4)})`;
+
+  let orderDetails = cart.map(item => `- ${item.name} (${item.qty})`).join('\n');
+  let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0).toFixed(2);
+  
+  const orderData = { id: Date.now(), name, phone: maskedPhone, location: locationText, items: orderDetails, total, date: new Date().toLocaleString('ar-SA') };
+  
+  ordersDB.push(orderData);
+  localStorage.setItem('marsad_orders', JSON.stringify(ordersDB));
+
+  const msg = `مرحباً مرصد، طلب جديد:\n👤 ${name}\n📱 الرقم (محمي): ${maskedPhone}\n📍 ${locationText}\n🗺️ رابط الموقع: ${mapLink}\n\n📦 الطلبات:\n${orderDetails}\n\n💰 الإجمالي: ${total} ر.س`;
+  
+  window.open(`https://wa.me/${YEMENI_PHONE}?text=${encodeURIComponent(msg)}`, '_blank');
+  setTimeout(() => { window.open(`https://wa.me/${ADMIN_PHONE}?text=${encodeURIComponent(msg)}`, '_blank'); }, 1000);
+  
+  cart = []; updateCartUI(); alert('تم تجهيز الطلب! سيتم تحويلك للواتساب.'); nav('home');
+}
+
+function toggleBot() { document.getElementById('botPanel').classList.toggle('active'); }
+function sendBotMsg() {
+  const input = document.getElementById('botInput');
+  const val = input.value.trim();
+  if (!val) return;
+  botReply(val);
+  input.value = '';
+}
+function botReply(question) {
+  const msgs = document.getElementById('botMessages');
+  msgs.innerHTML += `<div class="msg user">${question}</div>`;
+  msgs.scrollTop = msgs.scrollHeight;
+  
+  let reply = "عذراً، لم أفهم قصدك. جرب السؤال عن: أسعار المياه، طريقة الطلب، أو تواصل معنا.";
+  const foundProduct = allProducts.find(p => question.includes(p['اسم المنتج']) || p['اسم المنتج'].includes(question.replace('بكم ', '').replace('سعر ', '').replace('؟','').trim()));
+  
+  if (foundProduct) {
+    reply = `نعم متوفر لدينا ${foundProduct['اسم المنتج']} بسعر ${foundProduct['السعر']} ريال. يمكنك إضافته للسلة!`;
+  } else if (question.includes('مياه') || question.includes('مويه')) {
+    reply = "لدينا جميع أنواع المياه. يرجى كتابة اسم المنتج بالكامل لمعرفة سعره.";
+  } else if (question.includes('طلب') || question.includes('أطلب')) {
+    reply = "للطلب: اختر المنتجات من الرئيسية، ثم اذهب للسلة، أدخل بياناتك، وحدد موقعك على الخريطة.";
+  } else if (question.includes('لعبة') || question.includes('كوبون')) {
+    reply = "يمكنك اللعب من زر 🏎️ ديربي أو من خلال صفحة البطاقات الرقمية، والوصول لـ 10 نقاط يمنحك كوبون خصم!";
+  }
+
+  setTimeout(() => {
+    msgs.innerHTML += `<div class="msg bot">${reply}</div>`;
+    msgs.scrollTop = msgs.scrollHeight;
+  }, 600);
+}
+
+function openAdmin() {
+  const pin = prompt("أدخل رمز الدخول:");
+  if (pin === "5590") {
+    document.getElementById('adminPanel').classList.add('active');
+    renderAdminOrders();
+  } else { alert("رمز خاطئ!"); }
+}
+function closeAdmin() { document.getElementById('adminPanel').classList.remove('active'); }
+function renderAdminOrders() {
+  const container = document.getElementById('adminOrders');
+  if (ordersDB.length === 0) { container.innerHTML = '<p>لا توجد طلبات.</p>'; return; }
+  container.innerHTML = ordersDB.map(o => `
+    <div class="admin-order">
+      <b>${o.name}</b><br>${o.phone}<br>${o.location}<br>
+      <small>${o.date}</small><br>
+      <pre>${o.items}</pre>
+      <b style="color:var(--gold);">الإجمالي: ${o.total} ر.س</b>
+    </div>
+  `).join('');
+}
+
+// إكمال كود اللعبة
+const derbyCanvas = document.getElementById('derbyCanvas');
+const derbyCtx = derbyCanvas.getContext('2d');
+let derbyInterval, derbyScore = 0, derbyLevel = 1, derbyIsPlaying = false, speedMultiplier = 1;
+let playerBall = { x: 50, y: 160, radius: 15, color: '#00f0ff', speed: 4 };
+let rivalBalls = [
+    { x: 50, y: 70, radius: 15, color: '#ff3366', speed: 3 },
+    { x: 50, y: 250, radius: 15, color: '#33ff77', speed: 3.5 }
+];
+
+function drawDerbyTrack() {
+    if(!derbyCtx) return;
+    derbyCtx.fillStyle = '#181c30';
+    derbyCtx.fillRect(0, 0, derbyCanvas.width, derbyCanvas.height);
+    derbyCtx.strokeStyle = '#333b5c';
+    derbyCtx.lineWidth = 2;
+    derbyCtx.setLineDash([15, 15]);
+    derbyCtx.beginPath();
+    derbyCtx.moveTo(0, 106); derbyCtx.lineTo(derbyCanvas.width, 106);
+    derbyCtx.moveTo(0, 213); derbyCtx.lineTo(derbyCanvas.width, 213);
+    derbyCtx.stroke();
+    derbyCtx.setLineDash([]);
+    derbyCtx.fillStyle = '#C5A021';
+    derbyCtx.fillRect(derbyCanvas.width - 30, 0, 10, derbyCanvas.height);
+}
+
+function drawDerbyBall(ball) {
+    if(!derbyCtx) return;
+    derbyCtx.beginPath();
+    derbyCtx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+    derbyCtx.fillStyle = ball.color;
+    derbyCtx.shadowBlur = 12;
+    derbyCtx.shadowColor = ball.color;
+    derbyCtx.fill();
+    derbyCtx.closePath();
+    derbyCtx.shadowBlur = 0;
+}
+
+function updateDerby() {
+    if (!derbyIsPlaying) return;
+    derbyCtx.clearRect(0, 0, derbyCanvas.width, derbyCanvas.height);
+    drawDerbyTrack();
+    playerBall.x += playerBall.speed * speedMultiplier;
+    drawDerbyBall(playerBall);
+    rivalBalls.forEach(rival => {
+        rival.x += rival.speed + (Math.random() * 0.5);
+        drawDerbyBall(rival);
+    });
+    if (playerBall.x >= derbyCanvas.width - 40) {
+        derbyScore += 100 * derbyLevel;
+        document.getElementById('scoreDisplay').innerText = derbyScore;
+        if (derbyLevel < 3) {
+            derbyLevel++;
+            document.getElementById('lvlDisplay').innerText = derbyLevel;
+            document.getElementById('statusDisplay').innerText = `انتقلت للمستوى ${derbyLevel}! 🎉`;
+            resetDerbyPositions();
+        } else {
+            derbyIsPlaying = false;
+            clearInterval(derbyInterval);
+            document.getElementById('statusDisplay').innerText = "🏆 ألف مبروك! توجت بلقب الديربي الملكي!";
+        }
+    }
+}
+
+function startGame() {
+    if (derbyIsPlaying) return;
+    derbyIsPlaying = true;
+    document.getElementById('statusDisplay').innerText = "السباق مشتعل الآن! 🏁";
+    derbyInterval = setInterval(updateDerby, 1000 / 60);
+}
+
+function boostSpeed() {
+    if (!derbyIsPlaying) return;
+    speedMultiplier = 2;
+    setTimeout(() => { speedMultiplier = 1; }, 1500);
+}
+
+function resetDerbyPositions() {
+    playerBall.x = 50;
+    rivalBalls[0].x = 50;
+    rivalBalls[1].x = 50;
+}
+
+function resetGame() {
+    clearInterval(derbyInterval);
+    derbyIsPlaying = false;
+    derbyScore = 0;
+    derbyLevel = 1;
+    speedMultiplier = 1;
+    document.getElementById('scoreDisplay').innerText = 0;
+    document.getElementById('lvlDisplay').innerText = 1;
+    document.getElementById('statusDisplay').innerText = "جاهز للاقتحام";
+    resetDerbyPositions();
+    drawDerbyTrack();
+    drawDerbyBall(playerBall);
+    rivalBalls.forEach(drawDerbyBall);
+}
+
+function redeemCode() {
+    const code = document.getElementById('voucherCode').value.trim();
+    if (code === "MARSAD-150-9900") {
+        playerBall.color = "#ffd700";
+        playerBall.speed = 7;
+        alert("✨ تم تفعيل بطاقة التاج الملكي (150 ريال)! السرعة القصوى مفعلة.");
+    } else if (code === "MARSAD-90-5520") {
+        playerBall.color = "#c0c0c0";
+        playerBall.speed = 6;
+        alert("🌟 تم تفعيل البطاقة الذهبية (90 ريال) بنجاح!");
+    } else if (code === "MARSAD-75-3341") {
+        playerBall.color = "#cd7f32";
+        playerBall.speed = 5.5;
+        alert("🥈 تم تفعيل بطاقة الفضة (75 ريال) بنجاح!");
+    } else if (code === "MARSAD-50-8812") {
+        derbyScore += 500;
+        document.getElementById('scoreDisplay').innerText = derbyScore;
+        alert("🥉 تم تفعيل بطاقة البرونز (50 ريال)! أضيفت 500 نقطة.");
+    } else {
+        alert("❌ الكود غير صحيح!");
+    }
+}
+
+resetGame();
+
+window.MarsadDC = (function(){
+  'use strict';
+
+  const CARD_ITEMS = [
+    { id:'g1', type:'game', name:'بطاقة البرونز', price:50, tag:'درع حماية + رصيد', img:'https://i.postimg.cc/rRRHFpyH/1794091442078.png', desc:'درع حماية (24 ساعة) + لقب برونزي.', zid: ZID_STORE_URL, code:'MARSAD-50-8812' },
+    { id:'g2', type:'game', name:'بطاقة الفضة', price:75, tag:'مضاعف سرعة', img:'https://i.postimg.cc/rRRHFpyH/1794091442078.png', desc:'مضاعف سرعة في جمع النقاط + إطارات.', zid: ZID_STORE_URL, code:'MARSAD-75-3341' },
+    { id:'g3', type:'game', name:'البطاقة الذهبية', price:90, tag:'درع ضد الصدمات', img:'https://i.postimg.cc/rRRHFpyH/1794091442078.png', desc:'درع مضاد للصدمات + لقب فضي.', zid: ZID_STORE_URL, code:'MARSAD-90-5520' },
+    { id:'g4', type:'game', name:'التاج الملكي', price:150, tag:'الأسطورية (كل المميزات)', img:'https://i.postimg.cc/rRRHFpyH/1794091442078.png', desc:'تاج ذهبي متوهج + نقاط مضاعفة دائمة.', zid: ZID_STORE_URL, code:'MARSAD-150-9900' }
+  ];
+
+  const state = { isOpen:false, currentVolume:1 };
+  const $ = id => document.getElementById(id);
+
+  function renderVolumes(){
+    const box = $('mdcVolumes'); if(!box) return;
+    let html = '';
+    for(let i=1; i<=3; i++){
+      html += `<button class="mdc-vol-btn ${i===1?'active':''}" onclick="MarsadDC.selectVolume(${i})">مجلد ${i}</button>`;
+    }
+    box.innerHTML = html;
+  }
+
+  function selectVolume(num){
+    state.currentVolume = num;
+    document.querySelectorAll('.mdc-vol-btn').forEach((b, idx) => {
+      b.classList.toggle('active', idx+1 === num);
+    });
+    renderCards(num);
+  }
+
+  function renderCards(vol = 1){
+    const track = $('mdcTrack'); if(!track) return;
+    let filtered = CARD_ITEMS;
+    
+    track.innerHTML = filtered.map((c,i) => `
+      <div class="mdc-card ${c.type==='game'?'game-special':''}" style="--delay:${(i%5)*0.4}s" data-id="${c.id}">
+        <div class="mdc-card-badge">حصري للعبة</div>
+        <div class="mdc-card-img" style="background-image:url('${c.img}')"></div>
+        <div class="mdc-card-body">
+          <div class="mdc-card-name">${c.name}</div>
+          <div class="mdc-card-price">${c.price.toFixed(2)} ر.س</div>
+          <div class="mdc-card-tag">${c.tag}</div>
+        </div>
+      </div>
+    `).join('');
+
+    track.querySelectorAll('.mdc-card').forEach(el => el.addEventListener('click', () => openCard(el.dataset.id)));
+    track.scrollLeft = 0;
+  }
+
+  function nav(dir){
+    const track = $('mdcTrack'); if(!track) return;
+    const card = track.querySelector('.mdc-card');
+    const step = card ? card.offsetWidth + 25 : 265;
+    track.scrollBy({ left: dir * step, behavior:'smooth' });
+  }
+
+  function openCard(id){
+    const card = CARD_ITEMS.find(c => c.id === id); if(!card) return;
+    $('mdcMImg').style.backgroundImage = `url('${card.img}')`;
+    $('mdcMTitle').textContent = card.name;
+    $('mdcMDesc').textContent = card.desc;
+    $('mdcMPrice').textContent = card.price.toFixed(2) + ' ر.س';
+    
+    // إخفاء الكود من الواجهة لحماية الأرباح (كما طلبت)
+    $('mdcMDesc').innerHTML = card.desc + `<br><br><span style="color:var(--gold); font-size:12px;">🔒 الكود السري سيُرسل لك عبر الواتساب فور تأكيد الدفع.</span>`;
+    
+    $('mdcMBuy').onclick = () => {
+        window.open(card.zid, '_blank');
+    };
+    
+    $('mdcModal').classList.add('open');
+  }
+
+  function closeModal(){ $('mdcModal').classList.remove('open'); }
+
+  function open(){
+    $('marsadDigitalCards').classList.add('open');
+    state.isOpen = true;
+    renderVolumes();
+    selectVolume(1);
+    const c = JSON.parse(localStorage.getItem('marsad_dc_coupons') || '{"items":[]}');
+    $('mdcCouponCount').textContent = `🎁 كوبونات اللعبة`;
+  }
+
+  function close(){
+    $('marsadDigitalCards').classList.remove('open');
+    state.isOpen = false;
+  }
+
+  return { open, close, nav, openCard, closeModal, selectVolume };
+})();
+</script>
+</body>
+</html>
